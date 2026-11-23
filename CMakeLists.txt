@@ -283,6 +283,7 @@ em34xx_library(em34xx_tn5250
   src/tn5250/client.cpp
   src/tn5250/codepage.cpp
   src/tn5250/engine.cpp
+  src/tn5250/pointer.cpp
   src/tn5250/record.cpp
   src/tn5250/telnet.cpp
   src/tn5250/tls_policy.cpp

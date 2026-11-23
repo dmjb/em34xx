@@ -92,6 +92,17 @@ struct OperatorAction {
 
 const char* operator_action_name(OperatorAction::Kind k);
 
+// A mouse button event from the display: which button, what happened, the
+// keyboard's Shift state and the character position of the pointer.
+struct PointerAction {
+    enum class Button : uint8_t { Left, Right, Middle };
+    enum class Kind : uint8_t { Press, Release, DoubleClick };
+    Button button = Button::Left;
+    Kind kind = Kind::Press;
+    bool shift = false;
+    unsigned row = 0, col = 0;   // 0-based
+};
+
 class DisplaySessionPort {
 public:
     virtual ~DisplaySessionPort() = default;
@@ -110,6 +121,8 @@ public:
     virtual bool take_alarm() = 0;
     // A keystroke from the operator.
     virtual void operator_action(const OperatorAction& action) = 0;
+    // A mouse button event; a session without mouse handling ignores it.
+    virtual void pointer_action(const PointerAction& action) { (void)action; }
 };
 
 // Printer sessions. Discovery and identification are complete; the data

@@ -20,6 +20,7 @@ public:
     void screen_snapshot(ScreenState& out) const override;
     bool take_alarm() override { return session_.take_alarms() > 0; }
     void operator_action(const OperatorAction& action) override;
+    void pointer_action(const PointerAction& action) override;
 
     bool device_ready() const { return ready_; }
     const StationIdentity& identity() const { return identity_; }

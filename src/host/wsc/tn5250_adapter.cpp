@@ -33,6 +33,20 @@ void Tn5250DisplayAdapter::screen_snapshot(ScreenState& out) const {
     out.clicker = true;
 }
 
+void Tn5250DisplayAdapter::pointer_action(const PointerAction& a) {
+    tn5250::PointerEvent ev;
+    ev.button = a.button == PointerAction::Button::Left ? tn5250::PointerButton::Left
+                : a.button == PointerAction::Button::Right ? tn5250::PointerButton::Right
+                                                           : tn5250::PointerButton::Middle;
+    ev.action = a.kind == PointerAction::Kind::Press ? tn5250::PointerAction::Press
+                : a.kind == PointerAction::Kind::Release ? tn5250::PointerAction::Release
+                                                         : tn5250::PointerAction::DoubleClick;
+    ev.shift = a.shift;
+    ev.row = int(a.row);
+    ev.col = int(a.col);
+    session_.pointer_event(ev);
+}
+
 void Tn5250DisplayAdapter::operator_action(const OperatorAction& a) {
     using K = OperatorAction::Kind;
     using tn5250::Key;

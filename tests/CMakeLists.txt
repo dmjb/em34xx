@@ -72,6 +72,7 @@ add_executable(em34xx_tn5250_tests
   test_tn5250_negotiation.cpp
   test_tn5250_datastream.cpp
   test_tn5250_editing.cpp
+  test_tn5250_pointer.cpp
   test_tn5250_tls.cpp
   test_bridge.cpp
   fake_station.cpp

@@ -220,6 +220,18 @@ enum class KeyResult : uint8_t {
                        // an alarm has been queued for take_alarms()
 };
 
+// Pointing-device events as the display reports them to its controller (FR
+// chapter 17): a button pressed, released or double-clicked, with the
+// keyboard's Shift state and the character position under the pointer.
+enum class PointerButton : uint8_t { Left, Right, Middle };
+enum class PointerAction : uint8_t { Press, Release, DoubleClick };
+struct PointerEvent {
+    PointerButton button = PointerButton::Left;
+    PointerAction action = PointerAction::Press;
+    bool shift = false;
+    int row = 0, col = 0;            // 0-based
+};
+
 // ---------------------------------------------------------------------------
 // Records exchanged with the host (RFC 1205 section 3 header, minus framing)
 
@@ -286,6 +298,12 @@ public:
     virtual KeyResult key_data(uint8_t ebcdic) = 0;
     virtual KeyResult key_function(Key key) = 0;
     virtual KeyResult key_aid(Aid aid) = 0;
+    // The controller's default processing of a mouse button event (FR
+    // chapter 17). Ignored by a session that has none.
+    virtual KeyResult pointer_event(const PointerEvent& ev) {
+        (void)ev;
+        return KeyResult::Ignored;
+    }
 
     // --- host replies ---
     // The engine produces inbound records (AID replies, query replies,

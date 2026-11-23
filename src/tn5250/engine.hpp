@@ -123,6 +123,7 @@ public:
     KeyResult key_data(uint8_t ebcdic) override;
     KeyResult key_function(Key key) override;
     KeyResult key_aid(Aid aid) override;
+    KeyResult pointer_event(const PointerEvent& ev) override;
     void set_record_sink(RecordSink sink) override { sink_ = std::move(sink); }
     void set_device_ready(bool ready) override;
     bool device_ready() const { return device_ready_; }
@@ -185,6 +186,12 @@ private:
     bool aid_includes_data(uint8_t aid) const;
     void set_mdt(Field& f) { f.ffw = uint16_t(f.ffw | 0x0800); }
 
+    // Pointing device (pointer.cpp).
+    std::string pointer_row_text(int row) const;
+    KeyResult pointer_left_press(int addr);
+    KeyResult pointer_hot_spot(int addr, bool right);
+    KeyResult pointer_menu_choice(const std::string& number);
+
     EngineOptions opt_;
     RecordSink sink_;
     int rows_ = 24, cols_ = 80;
@@ -211,6 +218,11 @@ private:
     bool unlock_after_reset_ = false;
     std::vector<Cell> saved_error_line_;
     bool fer_wait_ = false;           // Field Exit required at the last position
+
+    // Address where the last left-button press positioned the text cursor
+    // (FR 17, left button pressed, step 9), -1 if it did something else: a
+    // double click there is Enter.
+    int pointer_positioned_ = -1;
 
     uint8_t read_cmd_ = 0;            // pending 42 / 52 / 82, or 0
     uint8_t pending_aid_ = 0;         // AID held until the next read
