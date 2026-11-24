@@ -189,6 +189,95 @@ A model's `ModelInfo::max_printer_sessions` limits printer stations: one on
 the 3477 (display + printer on its two addresses) and the 3489, none on the
 3486.
 
+## Pointing device (3486/3487)
+
+None of this is in the PAI, which predates these terminals. It comes from
+the 3487 firmware running in the emulator (`54g0010.bin`, model 3487, mono,
+one display session) with a PS/2 mouse on the second port; every line is
+marked. What a click then does is in `docs/tn5250.md`, "Pointing device".
+
+### What the terminal does by itself [obs]
+
+Left alone by the controller, the terminal handles the mouse locally:
+
+| Event | To the controller |
+| --- | --- |
+| Movement | nothing; the firmware draws its own pointer |
+| Left button pressed | outstanding status (poll status bit `10`) on two polls, then nothing |
+| Right button pressed | scan code `68` (Enter) in poll byte 2 |
+| Middle button pressed | scan code `7E` (Reset) |
+| Any button released | nothing |
+
+### Identification [obs]
+
+Read Device ID, model ID, keyboard ID and the extended ID are the same as
+a 3477's, with or without a mouse. Read Info tells them apart:
+
+| Read | 3477 | 3486/3487 |
+| --- | --- | --- |
+| `0B 80`, bytes 0-6 | `3477FE0` | `3477FE0` |
+| `0B 80`, bytes 51-52 | `00 00` | `1F 9F`, or `1F DF` with a pointing device |
+| `0B C0` | an exception that Write Control Data does not reset: the station never comes on line | the unit's own VPD, `3487HA0`; byte 52 bit `40` = pointing device attached |
+
+The controller therefore sends `0B C0` only when byte 52 of the `0B 80`
+answer is not zero. What the other bits of bytes 51 and 52 mean is
+unknown.
+
+### Switching button events on
+
+| Step | Bytes | Effect | |
+| --- | --- | --- | --- |
+| 1 | `0B C0`, Activate Read | besides the VPD, unlocks a third Write Control Data byte for the session | [obs] |
+| 2 | `05 b1 b2 b3` with `b2` bits `80` (byte 3 follows) and `40` (device addressing), `b3` bit `10` | button events are reported as records instead of handled locally; needs a pointing device | [obs] |
+| 3 | `09 09 03` | selects record 3, the pointer record, for reads from device 101 | [obs] |
+
+- Without step 1, the third byte is taken as a command and gives exception
+  `08` [obs].
+- `b3` bits `04` and `02` set an interval for movement records (`02`
+  [obs], the other values [hyp]); the controller does not ask for them.
+- The terminal's station reset clears all of it [hyp, from the firmware's
+  reset routine], so the controller repeats the steps after every
+  discovery. It sends the three-byte form in every Write Control Data.
+- Whether the read in the next section needs device addressing is a [hyp];
+  the controller sets it because the working exchange had it. Painting and
+  the indicators work unchanged with it on [obs].
+
+### Reading an event [obs]
+
+An event raises outstanding status. The controller answers with Load
+Address Counter 0, Load Reference Counter 7 and `BA` (read device 101
+between the counters), then Activate Read, and gets 8 bytes:
+
+| Byte | Content |
+| --- | --- |
+| 0 | `01` pointer event; `00` nothing pending |
+| 1, 2, 3 | left, right, middle button: `1` pressed, `2` released, `3` pressed again within the double-click time |
+| 4 | buttons down now: `80` left, `40` right, `20` middle |
+| 5-6 | the pointer's buffer address, high byte first: row x columns + column, from 0 |
+| 7 | `00` |
+
+- Shift is not in the record. The controller takes it from the keyboard's
+  shift state, which it tracks anyway.
+- **The offer lasts two polls.** An event not read by then is dropped, and
+  every poll counts. The controller therefore sends the read command and
+  the Activate Read with no poll in between, ahead of other work at the
+  next step boundary. An Activate Read sent at once is not answered, so it
+  waits 2 ms first (`WscTiming::pointer_read_ns`, [design]).
+- Events queue in the terminal (32 [hyp]) while nobody reads; the
+  controller polls again at once after each record.
+- An event that arrives while a screen is being painted can still be lost,
+  because the paint's own polls use up the offer [hyp, not seen].
+
+### Not known
+
+- The double-click time and the movement interval in real time.
+- Two display sessions, split screen, the message line: the firmware
+  computes the position differently there [hyp]; untested.
+- Colour models and the 3486 strap code: untested.
+- What a real controller sends. With IBM's 2661 code (V3R2) the first
+  press was answered with reads of devices 5 and 4 [obs on another
+  branch]; that controller level may predate the pointer.
+
 ## Painting a screen
 
 The controller keeps a per-cell mirror of the device buffer (value or

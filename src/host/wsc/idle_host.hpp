@@ -29,6 +29,7 @@ public:
     void screen_snapshot(ScreenState& out) const override { out = screen_; }
     bool take_alarm() override { return false; }
     void operator_action(const OperatorAction& action) override;
+    void pointer_action(const PointerAction& action) override;
 
     bool ready() const { return ready_; }
     const ScreenState& screen() const { return screen_; }

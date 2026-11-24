@@ -38,6 +38,10 @@ struct WscTiming {
     uint64_t busy_timeout_ns = 50'000'000;   // then the station is treated as failed
     unsigned no_response_limit = 3;          // consecutive misses before Absent
     size_t printer_chunk = 256;              // SCS bytes per Activate Write [hyp]
+    // Between the pointer record's read command and its Activate Read: time
+    // for the terminal to take the command, without a poll [obs: an
+    // Activate Read sent at once is not answered].
+    uint64_t pointer_read_ns = 2'000'000;
 };
 
 struct StationCounters {
@@ -45,6 +49,7 @@ struct StationCounters {
     uint64_t messages = 0;
     uint64_t no_responses = 0;
     uint64_t keys = 0;
+    uint64_t pointer_events = 0;
     uint64_t exceptions = 0;
     uint64_t parity_errors = 0;
     uint64_t discoveries = 0;
@@ -92,6 +97,7 @@ private:
         std::function<void(const std::vector<uint8_t>&)> on_data;   // ActivateRead
         std::function<void()> call;
         int group = 0;                // optional group: an exception skips it
+        uint64_t pause_ns = 0;        // Load: wait this long before the next operation
     };
 
     void enter(StationState s, uint64_t now);
@@ -106,6 +112,8 @@ private:
     void recover(uint8_t status, uint64_t now);
     bool handle_status(uint8_t status, bool two_frames, uint8_t byte2, uint64_t now);
     void handle_byte2(uint8_t level, uint8_t byte2);
+    void queue_pointer_read();
+    void handle_pointer_record(const std::vector<uint8_t>& d);
     void op_done(uint64_t now);
     FlushOptions flush_options() const;
     bool poll_soon() { const bool p = poll_soon_; poll_soon_ = false; return p; }
@@ -135,6 +143,8 @@ private:
     uint64_t flushed_generation_ = ~uint64_t(0);
     bool announced_ = false;         // device_ready() was sent to the session
     bool poll_soon_ = false;         // a key arrived: poll again without waiting
+    bool pointer_enabled_ = false;   // pointer reporting was switched on at Init
+    bool pointer_pending_ = false;   // outstanding status seen: read the pointer record
     StationState resume_state_ = StationState::Online;   // after Recover
 };
 

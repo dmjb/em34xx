@@ -45,17 +45,19 @@ std::vector<Step> plan_flush(const ScreenState& shadow, const DeviceMirror& mirr
     // 1. Format and control: Write Control Data.
     const uint8_t b1 = wcd_byte1_for(shadow);
     const uint8_t b2 = wcd_byte2_for(shadow, opt);
+    const int b3 = opt.wcd_byte3;
     const bool format_changed = m.rows != shadow.rows || m.cols != shadow.cols;
-    if (format_changed || alarm || m.wcd_byte1 != b1 || m.wcd_byte2 != b2) {
+    if (format_changed || alarm || m.wcd_byte1 != b1 || m.wcd_byte2 != b2 || m.wcd_byte3 != b3) {
         Step s;
         QueueLoad q;
-        q.write_control(uint8_t(b1 | (alarm ? wcd::Alarm : 0)), b2).end_of_queue();
+        q.write_control(uint8_t(b1 | (alarm ? wcd::Alarm : 0)), b2, opt.wcd_byte3).end_of_queue();
         s.load = q.bytes();
         const unsigned r = shadow.rows, c = shadow.cols;
         s.apply = [=](DeviceMirror& d) {
             if (d.rows != r || d.cols != c) d.set_format(r, c);   // no clear on the device
             d.wcd_byte1 = b1;
             d.wcd_byte2 = b2;
+            d.wcd_byte3 = b3;
         };
         s.what = format("wcd %02x %02x%s", b1, b2, alarm ? " alarm" : "");
         s.apply(m);

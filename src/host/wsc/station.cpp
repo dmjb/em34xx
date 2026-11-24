@@ -24,6 +24,18 @@ bool StationIdentity::is_3477() const {
     return vpd.size() >= 4 && vpd[0] == 0xF3 && vpd[1] == 0xF4 && vpd[2] == 0xF7 && vpd[3] == 0xF7;
 }
 
+// Bytes 51 and 52 of the 3477-format VPD: 00 00 on a 3477, 1F 9F (DF with
+// a pointing device) on a 3486/3487 [obs; what the bits mean is unknown].
+bool StationIdentity::offers_native_vpd() const { return is_3477() && vpd.size() > 52 && vpd[52] != 0; }
+
+bool StationIdentity::is_348x() const {
+    return native_vpd.size() >= 3 && native_vpd[0] == 0xF3 && native_vpd[1] == 0xF4 && native_vpd[2] == 0xF8;
+}
+
+bool StationIdentity::has_pointer() const {
+    return is_348x() && native_vpd.size() > 52 && (native_vpd[52] & 0x40) != 0;
+}
+
 bool StationIdentity::colour() const { return model_id == 0x50; }
 
 // The 3477 supports 27x132 on every model [doc PAI 16.0]; the 3197 only on
@@ -36,6 +48,7 @@ std::string StationIdentity::describe() const {
     std::string out = format("display, ID %02X, model %02X%s", device_id, model_id, is_3477() ? " (3477)" : "");
     if (has_keyboard_id)
         out += format(", keyboard %02X (%s)", keyboard_id, enhanced_keyboard() ? "enhanced" : "typewriter");
+    if (is_348x()) out += has_pointer() ? ", 348x with a pointing device" : ", 348x";
     out += wide_capable() ? ", 27x132" : ", 24x80";
     return out;
 }
@@ -101,6 +114,10 @@ bool Station::due(uint64_t now) const {
 
 void Station::next_message(uint64_t now, TwinaxMessage& out) {
     ++counters_.messages;
+    // A button event waits for its read for two polls only [obs], so the
+    // read goes ahead of any other work at the next step boundary.
+    if (pointer_pending_ && state_ == StationState::Online && (ops_.empty() || ops_.front().kind == OpKind::Load))
+        queue_pointer_read();
     if (ops_.empty() && state_ == StationState::Online) plan_online_work(now);
     if (ops_.empty()) {
         out = make_poll(address(), reset_lpe_);
@@ -144,9 +161,13 @@ void Station::next_message(uint64_t now, TwinaxMessage& out) {
 }
 
 void Station::op_done(uint64_t now) {
-    if (!ops_.empty()) ops_.pop_front();
+    uint64_t pause = 0;
+    if (!ops_.empty()) {
+        pause = ops_.front().pause_ns;
+        ops_.pop_front();
+    }
     waiting_ = false;
-    ready_at_ = now;
+    ready_at_ = now + pause;
     while (!ops_.empty() && ops_.front().kind == OpKind::Call) {
         std::function<void()> fn = std::move(ops_.front().call);
         ops_.pop_front();
@@ -285,7 +306,54 @@ bool Station::handle_status(uint8_t st, bool two_frames, uint8_t byte2, uint64_t
         return false;
     }
     if (two_frames) handle_byte2(uint8_t(st & status::Level), byte2);
+    if ((st & status::OutstandingStatus) && pointer_enabled_ && state_ == StationState::Online)
+        pointer_pending_ = true;
     return true;
+}
+
+// The pointer record, read as soon as outstanding status shows: the read
+// command and then Activate Read with no poll in between, because every
+// poll moves the terminal's offer on [obs]. Goes to the front of the work.
+void Station::queue_pointer_read() {
+    pointer_pending_ = false;
+    Op r;
+    r.kind = OpKind::ActivateRead;
+    r.on_data = [this](const std::vector<uint8_t>& d) { handle_pointer_record(d); };
+    ops_.push_front(r);
+    Op l;
+    l.kind = OpKind::Load;
+    l.bytes = QueueLoad().read_record(8).bytes();
+    l.pause_ns = timing_.pointer_read_ns;
+    ops_.push_front(l);
+}
+
+// 8 bytes [obs]: 01 = pointer event; an event code per button (left, right,
+// middle: 1 pressed, 2 released, 3 pressed again as a double click); the
+// buttons now down; the pointer's buffer address, high byte first.
+void Station::handle_pointer_record(const std::vector<uint8_t>& d) {
+    poll_soon_ = true;   // more events may be queued behind this one
+    if (d.size() < 7 || d[0] != 0x01) return;
+    const unsigned cols = mirror_.cols ? mirror_.cols : 80;
+    const unsigned pos = unsigned(d[5]) << 8 | d[6];
+    static const PointerAction::Button buttons[3] = {PointerAction::Button::Left, PointerAction::Button::Right,
+                                                     PointerAction::Button::Middle};
+    for (int b = 0; b < 3; ++b) {
+        const uint8_t code = uint8_t(d[size_t(1 + b)] & 0x0F);
+        if (code < 1 || code > 3) continue;
+        PointerAction a;
+        a.button = buttons[b];
+        a.kind = code == 1 ? PointerAction::Kind::Press
+                 : code == 2 ? PointerAction::Kind::Release : PointerAction::Kind::DoubleClick;
+        a.shift = keymap_.shift();   // the terminal does not report it; the keyboard does
+        a.row = pos / cols;
+        a.col = pos % cols;
+        ++counters_.pointer_events;
+        LOG_DEBUG("wsc", "station %u: pointer %s %s at %u,%u%s", cfg_.address,
+                  b == 0 ? "left" : b == 1 ? "right" : "middle",
+                  code == 1 ? "pressed" : code == 2 ? "released" : "double click", a.row + 1, a.col + 1,
+                  a.shift ? " (shift)" : "");
+        if (display_) display_->pointer_action(a);
+    }
 }
 
 void Station::handle_byte2(uint8_t level, uint8_t byte2) {
@@ -326,6 +394,8 @@ void Station::begin_discovery(uint8_t st, bool, uint64_t now) {
     mirror_ = DeviceMirror();
     keymap_.reset();
     type_mismatch_ = false;
+    pointer_enabled_ = false;
+    pointer_pending_ = false;
     const StationType configured = cfg_.type;
     id_ = StationIdentity();
     id_.address = address();
@@ -403,7 +473,36 @@ void Station::queue_identify() {
             }, 3);
             queue_read(QueueLoad().read_info().bytes(), [this](const std::vector<uint8_t>& d) {
                 id_.vpd = d;
+                LOG_DEBUG("wsc", "station %u: Read Info 80: %s", cfg_.address, hex_bytes(d.data(), d.size()).c_str());
             }, 4);
+            // A 3486/3487 answers Read Info C0 with its own VPD, and only
+            // then accepts a third Write Control Data byte [obs]. A 3477
+            // must not be asked: its firmware latches an exception that
+            // Write Control Data does not reset [obs]. The two differ in
+            // the ordinary VPD's feature bytes, so ask only on that.
+            Op ask;
+            ask.call = [this]() {
+                if (!id_.offers_native_vpd()) return;
+                Op r;
+                r.kind = OpKind::ActivateRead;
+                r.group = 5;
+                r.on_data = [this](const std::vector<uint8_t>& d) {
+                    id_.native_vpd = d;
+                    LOG_DEBUG("wsc", "station %u: Read Info C0: %s", cfg_.address,
+                              hex_bytes(d.data(), d.size()).c_str());
+                };
+                ops_.push_front(r);
+                Op w;
+                w.kind = OpKind::WaitReady;
+                w.group = 5;
+                ops_.push_front(w);
+                Op l;
+                l.kind = OpKind::Load;
+                l.group = 5;
+                l.bytes = QueueLoad().read_info(cmd::ReadInfoNative).bytes();
+                ops_.push_front(l);
+            };
+            ops_.push_back(ask);
         }
         Op init;
         init.call = [this]() { queue_init(); };
@@ -418,6 +517,12 @@ FlushOptions Station::flush_options() const {
         o.queue_bytes = kQueueBytes3477;
         o.wcd_byte2_base = wcd::B2Queue64;
         o.has_3477_indicators = true;
+    }
+    if (id_.has_pointer()) {
+        // Button events as records read from device 101, which needs device
+        // addressing [obs; whether the read needs it is a hypothesis].
+        o.wcd_byte2_base |= wcd::B2DeviceAddressing;
+        o.wcd_byte3 = wcd::B3PointerEvents;
     }
     return o;
 }
@@ -448,7 +553,10 @@ void Station::queue_init() {
 
     Op l1;
     l1.kind = OpKind::Load;
-    l1.bytes = QueueLoad().write_control(b1, b2).end_of_queue().bytes();
+    QueueLoad q1;
+    q1.write_control(b1, b2, o.wcd_byte3);
+    if (id_.has_pointer()) q1.select_record(cmd::RecordPointer);
+    l1.bytes = q1.end_of_queue().bytes();
     ops_.push_back(l1);
     Op w;
     w.kind = OpKind::WaitReady;
@@ -466,7 +574,12 @@ void Station::queue_init() {
     ops_.push_back(l2);
     ops_.push_back(w);
     Op c;
-    c.call = [this, b1, b2, blank, online]() {
+    const int b3 = o.wcd_byte3;
+    c.call = [this, b1, b2, b3, blank, online]() {
+        pointer_enabled_ = id_.has_pointer();
+        pointer_pending_ = false;
+        if (pointer_enabled_) LOG_INFO("wsc", "station %u: pointer button events enabled", cfg_.address);
+        mirror_.wcd_byte3 = b3;
         mirror_.set_format(blank.rows, blank.cols);
         std::fill(mirror_.cells.begin(), mirror_.cells.end(), int16_t(0));
         mirror_.cursor = 0;
@@ -545,7 +658,7 @@ void Station::recover(uint8_t st, uint64_t now) {
         l.kind = OpKind::Load;
         QueueLoad q;
         if (mirror_.wcd_byte2 >= 0)
-            q.write_control(uint8_t(mirror_.wcd_byte1 | wcd::ResetException), mirror_.wcd_byte2);
+            q.write_control(uint8_t(mirror_.wcd_byte1 | wcd::ResetException), mirror_.wcd_byte2, mirror_.wcd_byte3);
         else
             q.write_control(wcd::ResetException);
         l.bytes = q.end_of_queue().bytes();
@@ -571,6 +684,7 @@ std::string Station::describe() const {
                              plugged_ ? "plugged" : "unplugged", station_state_name(state_));
     if (state_ == StationState::Online) out += ", " + id_.describe();
     if (type_mismatch_) out += " [type mismatch]";
+    if (pointer_enabled_) out += format(", pointer events %llu", (unsigned long long)counters_.pointer_events);
     out += format("; polls %llu, keys %llu, steps %llu, exceptions %llu, LPE %llu, no-response %llu\n",
                   (unsigned long long)counters_.polls, (unsigned long long)counters_.keys,
                   (unsigned long long)counters_.steps, (unsigned long long)counters_.exceptions,

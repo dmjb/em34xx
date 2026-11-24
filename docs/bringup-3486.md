@@ -537,9 +537,11 @@ line with `--twinax-host wsc`):
   screen) and draws the pointer itself in display memory, at the cell under
   it; no display register is involved. In the emulator it shows as a solid
   block; what a real tube shows there is not known.
-- A click on the local (`wsc`) screen had no visible effect. What clicks do
-  with a host, and what the terminal reports to the controller, is not
-  explored.
+- What the terminal reports to the controller, and how the built-in
+  controller switches button events on, is in `docs/twinax-bridge.md`,
+  "Pointing device". With `--twinax-host wsc` a left press moves the local
+  screen's cursor to the pointer; with the TN5250 bridge the click is
+  processed as in `docs/tn5250.md`, "Pointing device".
 
 `mouse DX DY [BUTTONS]` in the monitor moves it. The SDL front end forwards
 the host's mouse (relative movement and three buttons) without hiding or

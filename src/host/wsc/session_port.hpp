@@ -30,8 +30,15 @@ struct StationIdentity {
     bool has_extended_id = false;
     std::array<uint8_t, 16> extended_id{};  // Read Data to model (88): model, style, language, ...
     std::vector<uint8_t> vpd;     // Read Info (0B 80): 64 bytes, empty if refused
+    // Read Info (0B C0): the unit's own VPD on a 3486/3487 ("3487HA0"...),
+    // empty if refused or not asked [obs].
+    std::vector<uint8_t> native_vpd;
 
     bool is_3477() const;         // VPD starts with EBCDIC "3477"
+    bool offers_native_vpd() const;   // the 3477-format VPD marks a 3486/3487: Read Info C0 may be asked
+    bool is_348x() const;         // native VPD starts with EBCDIC "348"
+    // A pointing device is attached: native VPD byte 52 bit 40h [obs].
+    bool has_pointer() const;
     bool colour() const;          // model ID 50
     bool wide_capable() const;    // 27x132 presentation space
     bool enhanced_keyboard() const { return has_keyboard_id && (keyboard_id & 0x80); }

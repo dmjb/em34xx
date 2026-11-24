@@ -44,6 +44,12 @@ constexpr uint8_t ReadModelData = 0x88;                          // Read Data to
 constexpr uint8_t WriteIndicators = DevIndicators | WriteDataLoadCursor;  // 51
 constexpr uint8_t WriteControlIndicators = DevIndicators | WriteControlData;  // 45
 constexpr uint8_t ReadInfoVpd = 0x80;    // Read Info parameter
+// 3486/3487 [obs, docs/twinax-bridge.md "Pointing device"].
+constexpr uint8_t ReadInfoNative = 0xC0;    // Read Info parameter: the unit's own VPD
+constexpr uint8_t Extended = 0x09;          // 09 sub [parameter]
+constexpr uint8_t ExtSelectRecord = 0x09;   // record that device-101 reads address
+constexpr uint8_t RecordPointer = 0x03;
+constexpr uint8_t ReadRecord = 0xBA;        // read between the counters, device 101
 } // namespace cmd
 
 // Poll response status byte [doc PAI fig. 23/24].
@@ -76,10 +82,12 @@ constexpr uint8_t ResetException = 0x04;
 constexpr uint8_t ClickerOff = 0x02;
 constexpr uint8_t Alarm = 0x01;
 
+constexpr uint8_t B2Byte3Follows = 0x80;       // 3486/3487, after Read Info C0 [obs]
 constexpr uint8_t B2DeviceAddressing = 0x40;   // 3477: E0h addresses "Both"
 constexpr uint8_t B2Wide = 0x08;               // 27x132
 constexpr uint8_t B2Queue64 = 0x02;            // 3477: 64-byte command queue
 constexpr uint8_t B2MessageLine = 0x01;
+constexpr uint8_t B3PointerEvents = 0x10;      // 3486/3487: report button events [obs]
 } // namespace wcd
 
 // A queue load: command and data bytes for one message. A load that ends
@@ -95,13 +103,16 @@ public:
     // so that data bytes 01..0E are never read as a count).
     QueueLoad& write_data_load_cursor(const uint8_t* data, size_t n);
     QueueLoad& write_indicators(uint8_t bits);
-    QueueLoad& write_control(uint8_t byte1, int byte2 = -1);   // byte2 < 0: one byte
+    // byte2 < 0: one byte; byte3 >= 0: three bytes (3486/3487).
+    QueueLoad& write_control(uint8_t byte1, int byte2 = -1, int byte3 = -1);
     QueueLoad& write_control_indicators(uint8_t bits);
     QueueLoad& set_mode(uint8_t mode);
     QueueLoad& write_data();                  // preactivate: arms Activate Write
     QueueLoad& read_device_id(uint8_t command = cmd::ReadDeviceId);  // preactivate
     QueueLoad& read_model_data();             // preactivate
-    QueueLoad& read_info();                   // preactivate
+    QueueLoad& read_info(uint8_t parameter = cmd::ReadInfoVpd);   // preactivate
+    QueueLoad& select_record(uint8_t record); // 3486/3487: 09 09 n
+    QueueLoad& read_record(unsigned bytes);   // preactivate: the first `bytes` of the selected record
     QueueLoad& raw(uint8_t byte);
     QueueLoad& end_of_queue();
 

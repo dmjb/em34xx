@@ -26,6 +26,7 @@ struct DeviceMirror {
     int indicators_3477 = -1;      // WCD-to-indicators byte
     int wcd_byte1 = -1;            // persistent byte 1 bits (blink, clicker)
     int wcd_byte2 = -1;
+    int wcd_byte3 = -1;            // 3486/3487 third byte, -1 if not sent
 
     size_t size() const { return size_t(rows) * cols; }
     void set_format(unsigned r, unsigned c);   // keeps nothing: all unknown
@@ -49,6 +50,7 @@ struct FlushOptions {
     unsigned clear_percent = 60;        // clear first if this share of cells must become null
     uint8_t wcd_byte2_base = 0;         // 3477: wcd::B2Queue64
     bool has_3477_indicators = false;   // send WCD-to-indicators (45)
+    int wcd_byte3 = -1;                 // 3486/3487: third WCD byte, -1 = two bytes
 };
 
 // Plans the steps that bring a device showing `mirror` to `shadow`.

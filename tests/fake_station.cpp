@@ -25,6 +25,17 @@ void FakeStation::power_on() {
     cr_ = 0x4F;
     wcd1_ = wcd2_ = 0;
     indicators_ = indicators_3477_ = 0;
+    native_info_ = false;
+    bad_info_ = false;
+    pointer_reporting_ = false;
+    record_ = 1;
+    pointer_events_.clear();
+    pointer_offers_ = 0;
+}
+
+void FakeStation::pointer_event(uint8_t left, uint8_t right, uint8_t middle, unsigned position) {
+    if (!pointer_reporting_) return;
+    pointer_events_.push_back({0x01, left, right, middle, 0x00, uint8_t(position >> 8), uint8_t(position), 0x00});
 }
 
 void FakeStation::set_powered(bool on) {
@@ -56,6 +67,10 @@ std::vector<uint8_t> FakeStation::vpd() const {
     v[0] = 0xF3; v[1] = 0xF4; v[2] = 0xF7; v[3] = 0xF7;   // "3477"
     v[4] = 0xC6; v[5] = opt_.model_id == 0x50 ? 0xC3 : 0xC7; v[6] = 0xF0;   // FC0 / FG0
     v[50] = opt_.model_id == 0x50 ? 0xFA : 0x7A;
+    if (opt_.is_348x) {
+        v[51] = 0x1F;
+        v[52] = opt_.pointer ? 0xDF : 0x9F;
+    }
     return v;
 }
 
@@ -85,7 +100,17 @@ bool FakeStation::receive(const TwinaxMessage& msg, TwinaxMessage& response) {
         }
         const bool busy = busy_ > 0;
         if (busy) --busy_;
-        const uint8_t st = uint8_t((busy ? 0x80 : 0) | (lpe_ ? 0x40 : 0) | exception_ | level_);
+        // A button event shows as outstanding status on two polls and is
+        // then dropped unless its record was read.
+        if (!pointer_events_.empty() && pointer_offers_ == 2) {
+            pointer_events_.pop_front();
+            pointer_offers_ = 0;
+            ++pointer_dropped_;
+        }
+        const bool outstanding = !pointer_events_.empty();
+        if (outstanding) ++pointer_offers_;
+        const uint8_t st =
+            uint8_t((busy ? 0x80 : 0) | (lpe_ ? 0x40 : 0) | (outstanding ? 0x10 : 0) | exception_ | level_);
         response.clear();
         if (!set_mode_) {
             response.push_back(TwinaxFrame{st, 7});
@@ -190,13 +215,20 @@ void FakeStation::run_load(const std::vector<uint8_t>& b) {
         case 0x05: {
             if (!need(1)) return;
             const uint8_t b1 = b[i++];
-            int b2 = -1;
+            int b2 = -1, b3 = -1;
             if (display() && (b1 & 0x40)) {
                 if (!need(1)) return;
                 b2 = b[i++];
+                if (b2 & 0x80) {
+                    // A third byte, only after Read Info C0; before it the
+                    // byte is taken as a command.
+                    if (!native_info_) { fail(0x08); return; }
+                    if (!need(1)) return;
+                    b3 = b[i++];
+                }
             }
             if (exception_ && !(b1 & 0x04)) break;   // ignored during an exception
-            if (b1 & 0x04) exception_ = 0;
+            if (b1 & 0x04 && !bad_info_) exception_ = 0;
             wcd1_ = b1;
             if (b1 & 0x01) ++alarms_;
             if (b2 >= 0) {
@@ -208,6 +240,7 @@ void FakeStation::run_load(const std::vector<uint8_t>& b) {
                 }
                 queue64_ = (b2 & 0x02) != 0;
             }
+            if (b3 >= 0) pointer_reporting_ = opt_.pointer && (b3 & 0x10) != 0;
             break;
         }
         case 0x0C:
@@ -265,9 +298,39 @@ void FakeStation::run_load(const std::vector<uint8_t>& b) {
             }
             case 0x0B:
                 if (!need(1)) return;
+                if (b[i] == 0xC0 && opt_.is_348x) {
+                    std::vector<uint8_t> v = vpd();
+                    v[2] = 0xF8; v[4] = 0xC8; v[5] = 0xC1;   // "3487HA0"
+                    native_info_ = true;
+                    arm_read(v);
+                    return;
+                }
+                // A 3477 asked for anything but 80: an exception that
+                // Write Control Data does not reset [obs]; the controller
+                // must not ask.
+                if (b[i] != 0x80 && opt_.is_3477) bad_info_ = true;
                 if (b[i] != 0x80 || !opt_.is_3477) { fail(0x08); return; }
                 arm_read(vpd());
                 return;
+            case 0x09:
+                if (!need(2) || !opt_.is_348x || b[i] != 0x09 || b[i + 1] < 1 || b[i + 1] > 5) { fail(0x08); return; }
+                record_ = b[i + 1];
+                i += 2;
+                break;
+            case 0xBA: {
+                // The pointer record between the counters; needs device
+                // addressing and record 3.
+                if (!opt_.is_348x || record_ != 3 || !(wcd2_ & 0x40) || rc_ < ac_ || rc_ >= 40) { fail(0x0C); return; }
+                std::vector<uint8_t> rec(40, 0);
+                if (!pointer_events_.empty()) {
+                    std::copy(pointer_events_.front().begin(), pointer_events_.front().end(), rec.begin());
+                    pointer_events_.pop_front();
+                    ++pointer_read_;
+                }
+                pointer_offers_ = 0;
+                arm_read(std::vector<uint8_t>(rec.begin() + ac_, rec.begin() + rc_ + 1));
+                return;
+            }
             default:
                 fail(0x08);
                 return;

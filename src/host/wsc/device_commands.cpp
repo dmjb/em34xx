@@ -49,9 +49,13 @@ QueueLoad& QueueLoad::write_indicators(uint8_t bits) {
     return *this;
 }
 
-QueueLoad& QueueLoad::write_control(uint8_t byte1, int byte2) {
+QueueLoad& QueueLoad::write_control(uint8_t byte1, int byte2, int byte3) {
     bytes_.push_back(cmd::WriteControlData);
-    if (byte2 >= 0) {
+    if (byte2 >= 0 && byte3 >= 0) {
+        bytes_.push_back(uint8_t(byte1 | wcd::Byte2Follows));
+        bytes_.push_back(uint8_t(byte2 | wcd::B2Byte3Follows));
+        bytes_.push_back(uint8_t(byte3));
+    } else if (byte2 >= 0) {
         bytes_.push_back(uint8_t(byte1 | wcd::Byte2Follows));
         bytes_.push_back(uint8_t(byte2));
     } else {
@@ -87,9 +91,23 @@ QueueLoad& QueueLoad::read_model_data() {
     return *this;
 }
 
-QueueLoad& QueueLoad::read_info() {
+QueueLoad& QueueLoad::read_info(uint8_t parameter) {
     bytes_.push_back(cmd::ReadInfo);
-    bytes_.push_back(cmd::ReadInfoVpd);
+    bytes_.push_back(parameter);
+    return *this;
+}
+
+QueueLoad& QueueLoad::select_record(uint8_t record) {
+    bytes_.push_back(cmd::Extended);
+    bytes_.push_back(cmd::ExtSelectRecord);
+    bytes_.push_back(record);
+    return *this;
+}
+
+QueueLoad& QueueLoad::read_record(unsigned bytes) {
+    load_address(0);
+    load_reference(bytes - 1);
+    bytes_.push_back(cmd::ReadRecord);
     return *this;
 }
 

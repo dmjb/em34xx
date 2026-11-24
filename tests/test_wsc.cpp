@@ -64,6 +64,8 @@ struct TestDisplay : DisplaySessionPort {
     uint64_t screen_generation() const override { return generation; }
     void screen_snapshot(ScreenState& out) const override { out = screen; }
     bool take_alarm() override { const bool a = alarm; alarm = false; return a; }
+    std::vector<PointerAction> pointer;
+    void pointer_action(const PointerAction& a) override { pointer.push_back(a); }
     void operator_action(const OperatorAction& a) override {
         actions.push_back(a);
         if (echo && a.kind == OperatorAction::Kind::Character) {
@@ -549,6 +551,79 @@ TEST_CASE("keystroke round trip") {
     CHECK(b.host->station(0)->counters().keys == 5);
 }
 
+TEST_CASE("pointing device: a 3486/3487 with a mouse reports button events with their position") {
+    Bench b({display_at(0)});
+    FakeStationOptions o;
+    o.is_348x = true;
+    o.pointer = true;
+    FakeStation f(0, o);
+    TestDisplay d;
+    b.plug(f);
+    b.host->station(0)->attach_display(&d);
+    REQUIRE(b.run_until([&] { return d.ready_count == 1; }));
+    CHECK(d.id.is_348x());
+    CHECK(d.id.has_pointer());
+    CHECK(f.pointer_reporting());
+    CHECK((f.wcd_byte2() & 0xC0) == 0xC0);
+    CHECK(f.exception() == 0);
+
+    // Press and release queued back to back, then a double click with the
+    // right button's press in the same record, Shift held.
+    f.pointer_event(1, 0, 0, 6 * 80 + 20);
+    f.pointer_event(2, 0, 0, 6 * 80 + 20);
+    REQUIRE(b.run_until([&] { return d.pointer.size() == 2; }));
+    CHECK(d.pointer[0].button == PointerAction::Button::Left);
+    CHECK(d.pointer[0].kind == PointerAction::Kind::Press);
+    CHECK(d.pointer[0].row == 6);
+    CHECK(d.pointer[0].col == 20);
+    CHECK_FALSE(d.pointer[0].shift);
+    CHECK(d.pointer[1].kind == PointerAction::Kind::Release);
+    f.press(0x12);   // shift make
+    b.run_for(100 * kMs);
+    f.pointer_event(3, 1, 0, 23 * 80 + 79);
+    REQUIRE(b.run_until([&] { return d.pointer.size() == 4; }));
+    CHECK(d.pointer[2].button == PointerAction::Button::Left);
+    CHECK(d.pointer[2].kind == PointerAction::Kind::DoubleClick);
+    CHECK(d.pointer[2].shift);
+    CHECK(d.pointer[2].row == 23);
+    CHECK(d.pointer[2].col == 79);
+    CHECK(d.pointer[3].button == PointerAction::Button::Right);
+    CHECK(d.pointer[3].kind == PointerAction::Kind::Press);
+    CHECK(f.pointer_events_dropped() == 0);
+    CHECK(f.exception() == 0);
+
+    // The screen still paints, and keys still arrive, with reporting on.
+    d.put(2, 3, "AB");
+    f.press(0x1B);
+    REQUIRE(b.run_until([&] { return screen_matches(f, d.screen) && d.actions.size() == 1; }));
+    CHECK(b.host->station(0)->counters().pointer_events == 4);
+
+    // A power cycle: reporting is off in the terminal and switched on again.
+    f.power_on();
+    REQUIRE(b.run_until([&] { return d.ready_count == 2; }));
+    CHECK(f.pointer_reporting());
+}
+
+TEST_CASE("pointing device: none attached, or not a 3486/3487: nothing is enabled") {
+    for (int kind = 0; kind < 2; ++kind) {
+        Bench b({display_at(0)});
+        FakeStationOptions o;
+        o.is_348x = kind == 0;   // a 348x without a mouse, then a 3477
+        FakeStation f(0, o);
+        TestDisplay d;
+        b.plug(f);
+        b.host->station(0)->attach_display(&d);
+        REQUIRE(b.run_until([&] { return d.ready_count == 1; }));
+        CHECK(d.id.is_348x() == (kind == 0));
+        CHECK_FALSE(d.id.has_pointer());
+        CHECK_FALSE(f.pointer_reporting());
+        CHECK((f.wcd_byte2() & 0xC0) == 0);
+        CHECK(f.exception() == 0);
+        d.put(2, 3, "AB");
+        REQUIRE(b.run_until([&] { return screen_matches(f, d.screen); }));
+    }
+}
+
 TEST_CASE("keystroke round trip with a 122-key typewriter keyboard") {
     Bench b({display_at(0)});
     FakeStationOptions opt;
@@ -746,6 +821,11 @@ struct FakeEngine : tn5250::DisplaySession {
         return tn5250::KeyResult::Accepted;
     }
     tn5250::KeyResult key_function(tn5250::Key k) override { keys.push_back(k); return tn5250::KeyResult::Accepted; }
+    std::vector<tn5250::PointerEvent> pointer;
+    tn5250::KeyResult pointer_event(const tn5250::PointerEvent& ev) override {
+        pointer.push_back(ev);
+        return tn5250::KeyResult::Accepted;
+    }
     tn5250::KeyResult key_aid(tn5250::Aid a) override { aids.push_back(a); return tn5250::KeyResult::Accepted; }
     void set_record_sink(RecordSink) override {}
 };
@@ -781,6 +861,31 @@ TEST_CASE("tn5250 session adapter drives a station") {
     CHECK(e.keys[0] == tn5250::Key::FieldAdvance);
     CHECK(e.keys[1] == tn5250::Key::Help);
     REQUIRE(b.run_until([&] { return f.cell(1, 3) == 0x81; }));
+}
+
+TEST_CASE("tn5250 session adapter passes button events to the session") {
+    Bench b({display_at(0)});
+    FakeStationOptions o;
+    o.is_348x = true;
+    o.pointer = true;
+    FakeStation f(0, o);
+    FakeEngine e;
+    Tn5250DisplayAdapter adapter(e);
+    b.plug(f);
+    b.host->station(0)->attach_display(&adapter);
+    REQUIRE(b.run_until([&] { return adapter.device_ready(); }));
+    f.pointer_event(0, 1, 0, 21 * 80 + 4);
+    f.pointer_event(0, 0, 3, 5);
+    REQUIRE(b.run_until([&] { return e.pointer.size() == 2; }));
+    CHECK(e.pointer[0].button == tn5250::PointerButton::Right);
+    CHECK(e.pointer[0].action == tn5250::PointerAction::Press);
+    CHECK(e.pointer[0].row == 21);
+    CHECK(e.pointer[0].col == 4);
+    CHECK_FALSE(e.pointer[0].shift);
+    CHECK(e.pointer[1].button == tn5250::PointerButton::Middle);
+    CHECK(e.pointer[1].action == tn5250::PointerAction::DoubleClick);
+    CHECK(e.pointer[1].row == 0);
+    CHECK(e.pointer[1].col == 5);
 }
 
 TEST_CASE("local controller: on line with a local screen, typed characters echo") {

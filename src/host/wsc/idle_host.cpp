@@ -65,6 +65,15 @@ void LocalDisplayPort::operator_action(const OperatorAction& a) {
     }
 }
 
+// With no host there is no hot spot to act on: a left press only puts the
+// cursor under the pointer, which shows that the events arrive.
+void LocalDisplayPort::pointer_action(const PointerAction& a) {
+    if (a.button != PointerAction::Button::Left || a.kind != PointerAction::Kind::Press) return;
+    if (a.row >= screen_.rows || a.col >= screen_.cols) return;
+    screen_.cursor = a.row * screen_.cols + a.col;
+    ++generation_;
+}
+
 LocalController::LocalController(const std::vector<StationConfig>& stations, const WscTiming& timing)
     : LinkScheduler(stations, timing) {
     for (const auto& s : this->stations()) {
