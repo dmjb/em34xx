@@ -330,6 +330,53 @@ TEST_CASE("tn5250 bridge: sign-on screen to the station, keystrokes back to the 
     CHECK(bridge.describe().find("(disconnected)") != std::string::npos);
 }
 
+TEST_CASE("tn5250 bridge: a click on a 3486/3487 moves the text cursor, a double click is Enter") {
+    TwinaxConfig tw;
+    tw.host = TwinaxHostKind::Tn5250;
+    tw.stations = {StationConfig{0, StationType::Display, "EM34XXA", ""}};
+    Tn5250Config tn;
+    tn.host = "ibmi.example";
+    auto server = std::make_shared<ServerScript>();
+    BridgeOptions opt;
+    opt.model = "3487";
+    opt.display = DisplaySubtype::Green;
+    opt.transport = [&](const StationConfig&, std::string&) -> std::unique_ptr<em34xx::tn5250::Transport> {
+        return std::make_unique<ScriptTransport>(server);
+    };
+    std::string err;
+    auto host = make_tn5250_bridge(tw, tn, opt, err);
+    REQUIRE(host);
+    auto& bridge = static_cast<Tn5250Bridge&>(*host);
+
+    Bench b(bridge);
+    FakeStationOptions o;
+    o.is_348x = true;
+    o.pointer = true;
+    FakeStation f(0, o);
+    b.plug(f);
+    server->push(negotiation());
+    server->push(framed_record(tn5250_test::signon_stream()));
+    REQUIRE(b.run_until([&] { return row_text(f, 0, 35, 7) == "Sign On" && f.cursor() == 5u * 80 + 52; }));
+    REQUIRE(b.run_until([&] { return f.pointer_reporting() && (f.indicators() & 0x02) == 0; }));
+
+    // Left button pressed in the user field, three columns in: the whole
+    // chain from the station's record to the engine moves the text cursor.
+    f.pointer_event(1, 0, 0, 5u * 80 + 55);
+    REQUIRE(b.run_until([&] { return f.cursor() == 5u * 80 + 55; }));
+    f.pointer_event(2, 0, 0, 5u * 80 + 55);
+    CHECK(client_records(server->sent()).empty());
+
+    // Pressed again as a double click: Enter, with the cursor where it is.
+    f.pointer_event(3, 0, 0, 5u * 80 + 55);
+    std::vector<em34xx::tn5250::Record> recs;
+    REQUIRE(b.run_until([&] {
+        recs = client_records(server->sent());
+        return !recs.empty();
+    }));
+    REQUIRE(recs.size() == 1);
+    CHECK(recs[0].data == Bytes{0x06, 0x38, 0xF1});
+}
+
 TEST_CASE("tn5250 bridge: per-station session settings") {
     Tn5250Config tn;
     tn.host = "h";

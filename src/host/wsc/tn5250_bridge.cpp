@@ -70,6 +70,7 @@ void DisplayStationPort::screen_snapshot(ScreenState& out) const { adapter_->scr
 bool DisplayStationPort::take_alarm() { return adapter_->take_alarm(); }
 
 void DisplayStationPort::operator_action(const OperatorAction& action) { adapter_->operator_action(action); }
+void DisplayStationPort::pointer_action(const PointerAction& action) { adapter_->pointer_action(action); }
 
 bool DisplayStationPort::connected() const { return client_->state() == tn5250::ConnState::Ready; }
 

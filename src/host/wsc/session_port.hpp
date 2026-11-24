@@ -128,8 +128,8 @@ public:
     virtual bool take_alarm() = 0;
     // A keystroke from the operator.
     virtual void operator_action(const OperatorAction& action) = 0;
-    // A mouse button event; a session without mouse handling ignores it.
-    virtual void pointer_action(const PointerAction& action) { (void)action; }
+    // A mouse button event from a 3486/3487's pointing device.
+    virtual void pointer_action(const PointerAction& action) = 0;
 };
 
 // Printer sessions. Discovery and identification are complete; the data

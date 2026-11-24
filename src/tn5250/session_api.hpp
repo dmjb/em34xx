@@ -299,11 +299,8 @@ public:
     virtual KeyResult key_function(Key key) = 0;
     virtual KeyResult key_aid(Aid aid) = 0;
     // The controller's default processing of a mouse button event (FR
-    // chapter 17). Ignored by a session that has none.
-    virtual KeyResult pointer_event(const PointerEvent& ev) {
-        (void)ev;
-        return KeyResult::Ignored;
-    }
+    // chapter 17).
+    virtual KeyResult pointer_event(const PointerEvent& ev) = 0;
 
     // --- host replies ---
     // The engine produces inbound records (AID replies, query replies,

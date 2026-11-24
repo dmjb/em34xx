@@ -81,6 +81,7 @@ public:
     KeyResult key_data(uint8_t ebcdic) override { return engine_.key_data(ebcdic); }
     KeyResult key_function(Key key) override { return engine_.key_function(key); }
     KeyResult key_aid(Aid aid) override { return engine_.key_aid(aid); }
+    KeyResult pointer_event(const PointerEvent& ev) override { return engine_.pointer_event(ev); }
     void set_record_sink(RecordSink sink) override;
     void set_device_ready(bool ready) override { engine_.set_device_ready(ready); }
 

@@ -158,6 +158,8 @@ void Station::next_message(uint64_t now, TwinaxMessage& out) {
         expect_ = Expect::PollStatus;
         break;
     }
+    if (op.kind != OpKind::WaitReady)
+        LOG_TRACE("wsc", "station %u: send %s", cfg_.address, format_twinax_message(out).c_str());
 }
 
 void Station::op_done(uint64_t now) {
@@ -182,6 +184,8 @@ void Station::on_response(const TwinaxMessage& msg, uint64_t now) {
     misses_ = 0;
     const Expect expect = expect_;
     expect_ = Expect::Nothing;
+    if (expect == Expect::ReadData || (!msg.empty() && (msg[0].data & (status::Busy | status::OutstandingStatus))))
+        LOG_TRACE("wsc", "station %u: recv %s", cfg_.address, format_twinax_message(msg).c_str());
     if (expect == Expect::ReadData) {
         std::vector<uint8_t> data;
         for (const TwinaxFrame& f : msg) data.push_back(f.data);

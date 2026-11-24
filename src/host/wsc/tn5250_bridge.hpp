@@ -93,6 +93,7 @@ public:
     void screen_snapshot(ScreenState& out) const override;
     bool take_alarm() override;
     void operator_action(const OperatorAction& action) override;
+    void pointer_action(const PointerAction& action) override;
 
     // Lifecycle, driven by Tn5250Bridge::advance() on the emulation thread.
     void tick(uint64_t now_ns);

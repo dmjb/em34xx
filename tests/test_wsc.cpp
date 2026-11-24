@@ -604,6 +604,44 @@ TEST_CASE("pointing device: a 3486/3487 with a mouse reports button events with 
     CHECK(f.pointer_reporting());
 }
 
+TEST_CASE("pointing device: a button event read in the middle of a repaint leaves the screen whole") {
+    Bench b({display_at(0)});
+    FakeStationOptions o;
+    o.is_348x = true;
+    o.pointer = true;
+    FakeStation f(0, o);
+    TestDisplay d;
+    b.plug(f);
+    b.host->station(0)->attach_display(&d);
+    REQUIRE(b.run_until([&] { return d.ready_count == 1; }));
+    for (unsigned r = 0; r < 20; ++r) d.put(r, 2 + r, "A LINE OF MENU TEXT THAT FILLS THE SCREEN");
+    REQUIRE(b.run_until([&] { return screen_matches(f, d.screen); }));
+    REQUIRE(b.run_until([&] { return b.host->station(0)->mirror().matches(d.screen); }));
+
+    // A mostly empty panel replaces it, and at every step of that repaint
+    // a button event arrives.
+    for (unsigned at = 1; at < 12; ++at) {
+        CAPTURE(at);
+        d.resize(24, 80);
+        d.put(0, 20 + at, "CONFIRM");
+        d.put(2, 1, "PRESS ENTER TO CONFIRM YOUR CHOICE");
+        d.put(22, 1, "F12=CANCEL");
+        const uint64_t steps = b.host->station(0)->counters().steps;
+        const size_t seen = d.pointer.size();
+        b.run_until([&] { return b.host->station(0)->counters().steps >= steps + at; });
+        f.pointer_event(2, 0, 0, 7 * 80 + 21);
+        REQUIRE(b.run_until([&] { return b.host->station(0)->mirror().matches(d.screen); }));
+        b.run_for(50 * kMs);
+        CHECK(screen_matches(f, d.screen));
+        CHECK(f.exception() == 0);
+        CHECK(d.pointer.size() <= seen + 1);
+        for (unsigned r = 0; r < 20; ++r) d.put(r, 2 + r, "A LINE OF MENU TEXT THAT FILLS THE SCREEN");
+        REQUIRE(b.run_until([&] { return b.host->station(0)->mirror().matches(d.screen); }));
+        b.run_for(50 * kMs);
+        CHECK(screen_matches(f, d.screen));
+    }
+}
+
 TEST_CASE("pointing device: none attached, or not a 3486/3487: nothing is enabled") {
     for (int kind = 0; kind < 2; ++kind) {
         Bench b({display_at(0)});
