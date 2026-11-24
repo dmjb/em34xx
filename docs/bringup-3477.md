@@ -508,6 +508,32 @@ firmware). Without `08` the terminal stays busy after every Activate Write.
 That the receiver raises `08` for Activate Write data as for a queued
 message is a hypothesis that this behaviour supports.
 
+A queue load raises `02` and `08` together. What the firmware does with
+them (observed in traces and in the code of the 3487 image's display
+channel handler; the 3477 image shows the same fault and the same cure):
+
+- The handler serves one condition per interrupt, `04` before `40` before
+  `02` before the rest, so `02` is served first: it executes the queued
+  commands, taking each byte as the receiver's pointer passes it.
+- When it wants another byte and none has come, it waits in a loop that
+  watches the request bits; `08` is what ends that wait, and has the queue
+  reset. Set Mode at power-on (`13 00`, no End of Queue) depends on it:
+  without `08` after a queue load the terminal stays busy for good.
+- The queue reset acknowledges `02`, sets the receiver up again, looks at
+  the request bits once more and only then writes `80` to drop busy. An
+  `08` it finds there goes to the error path, which clears the "armed for
+  Activate Write" state that Write Data (`1E`) has just set.
+- With that state cleared, the `04` of the Activate Write takes the short
+  exit: the data is in the buffer, but no redraw is asked for. It shows
+  only when a later Write Data and Load Cursor redraws the screen.
+
+So after Write Data the `08` of the queue load must be gone by the time
+the queue is reset. The model drops `08` when `02` is acknowledged
+[hypothesis; the real adapter may equally not raise it once the queue has
+been reset]. Before this, a repaint made only of Activate Writes left the
+screen stale (seen with a TN5250 host: a panel sent as full-width rows
+after one that had left nulls on the screen).
+
 ### Poll response
 
 Status byte: bit 7 busy, bit 6 line parity error, bit 5 toggles on every

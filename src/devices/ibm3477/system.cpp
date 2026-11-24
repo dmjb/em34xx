@@ -213,6 +213,16 @@ uint8_t Ibm3477System::read(uint32_t off, bool side_effects) {
 uint8_t Ibm3477System::mmio_read8(uint32_t off) { return read(off & 0xFF, true); }
 uint8_t Ibm3477System::peek8(uint32_t off) { return read(off & 0xFF, false); }
 
+namespace {
+// A write to a Twinax channel's request bits. Acknowledging "command
+// queued" (02) also drops "end of message" (08) [hypothesis]: the firmware
+// acknowledges 02 when it resets its command queue, and treats an 08 it
+// finds afterwards as a failed write, which un-arms the Write Data it has
+// just executed; the Activate Write that follows is then stored but never
+// drawn. See docs/bringup-3477.md, "Channel events".
+uint8_t queue_ack(uint8_t v) { return (v & 0x02) ? uint8_t(v | 0x08) : v; }
+} // namespace
+
 void Ibm3477System::mmio_write8(uint32_t off, uint8_t v) {
     off &= 0xFF;
     if (twinax_ && is_twinax_register(off)) {
@@ -220,8 +230,8 @@ void Ibm3477System::mmio_write8(uint32_t off, uint8_t v) {
         return;
     }
     switch (off) {
-    case 0x02: ic_.acknowledge_bits(v); return;
-    case 0x03: ic_.acknowledge_bits(uint16_t(v << 8)); return;
+    case 0x02: ic_.acknowledge_bits(queue_ack(v)); return;
+    case 0x03: ic_.acknowledge_bits(uint16_t(queue_ack(v) << 8)); return;
     case 0x04: ic_.set_mask(uint16_t((ic_.mask() & 0xFF00) | v)); return;
     case 0x05: ic_.set_mask(uint16_t((ic_.mask() & 0x00FF) | (v << 8))); return;
     case 0x07:
@@ -230,7 +240,7 @@ void Ibm3477System::mmio_write8(uint32_t off, uint8_t v) {
         ic_.set_aux_enabled(v & 2);   // 3486 family; never requested on the 3477
         return;
     case 0x0D:
-        if (third_channel_) ic_.acknowledge_bits2(v);
+        if (third_channel_) ic_.acknowledge_bits2(queue_ack(v));
         else latch_[off] = v;
         return;
     case 0x0F:

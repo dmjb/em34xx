@@ -227,6 +227,21 @@ TEST_CASE("3477 interrupt registers in the gate array") {
     s.w(0x20002, 0xFF);
     s.w(0x20003, 0xFF);
     CHECK(s.sys->interrupts().requests() == 0);
+    // Twinax channel events: acknowledging "command queued" (02) drops the
+    // queue load's "end of message" (08) with it; any other acknowledge
+    // clears just its own bits.
+    s.sys->interrupts().request(0x0A0A);
+    s.w(0x20002, 0x02);
+    CHECK(s.r(0x20002) == 0x00);
+    CHECK(s.r(0x20003) == 0x0A);
+    s.w(0x20003, 0x08);
+    CHECK(s.r(0x20003) == 0x02);
+    s.w(0x20003, 0x02);
+    s.sys->interrupts().request(0x000C);
+    s.w(0x20002, 0x04);   // activate done: the end of the Activate Write stays
+    CHECK(s.r(0x20002) == 0x08);
+    s.w(0x20002, 0x08);
+    CHECK(s.sys->interrupts().requests() == 0);
     s.w(0x20007, 0x01);
     CHECK(s.sys->interrupts().keyboard_enabled());
     s.w(0x20007, 0x00);
